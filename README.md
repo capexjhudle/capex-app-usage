@@ -1,97 +1,418 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# React Native App Usage Data Collector
 
-# Getting Started
+## Overview
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+This project is a **React Native Android application** that collects **per-application network usage statistics** from the user's device and stores them locally. The collected data is **not sent immediately**. Instead, it is queued locally and transmitted to the backend **only when triggered** (via Push Notification, Manual Sync, or another event).
 
-## Step 1: Start Metro
+The goal is to minimize unnecessary network requests while ensuring that historical usage data is preserved even if the device is offline.
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+---
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+# System Architecture
 
-```sh
-# Using npm
-npm start
-
-# OR using Yarn
-yarn start
+```
+                ┌─────────────────────────────┐
+                │ Android NetworkStatsManager │
+                └──────────────┬──────────────┘
+                               │
+                      Hourly Background Job
+                     (WorkManager / BackgroundFetch)
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │ Local SQLite Queue  │
+                    │  - payload          │
+                    │  - collected_at     │
+                    │  - sent             │
+                    └─────────┬───────────┘
+                              │
+                   Trigger (FCM / Manual Sync)
+                              │
+                              ▼
+                      REST API Batch Upload
+                              │
+                              ▼
+                   Mark Records as Successfully Sent
 ```
 
-## Step 2: Build and run your app
+---
 
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
+# Objectives
 
-### Android
+* Collect application network usage every hour.
+* Continue collecting even if there is no internet connection.
+* Store collected data locally.
+* Send data only when requested.
+* Prevent duplicate uploads.
+* Support background execution.
 
-```sh
-# Using npm
-npm run android
+---
 
-# OR using Yarn
-yarn android
+# Technologies
+
+## React Native
+
+Main application framework.
+
+---
+
+## Android Native Module (Kotlin)
+
+Responsible for accessing Android's `NetworkStatsManager` API.
+
+This module will:
+
+* Read application network usage.
+* Return:
+
+  * Package Name
+  * UID
+  * Received Bytes (RX)
+  * Transmitted Bytes (TX)
+
+---
+
+## NetworkStatsManager
+
+Android API used to retrieve network traffic statistics per application.
+
+Reference:
+
+```
+android.app.usage.NetworkStatsManager
 ```
 
-### iOS
+---
 
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
+## WorkManager
 
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+Responsible for scheduling periodic background collection.
 
-```sh
-bundle install
+Recommended interval:
+
+* Every 1 hour
+
+Responsibilities:
+
+* Execute background task
+* Call native module
+* Save collected data to SQLite
+
+---
+
+## SQLite
+
+Acts as the local queue.
+
+Example table:
+
+```sql
+usage_queue
+
+id
+payload
+collected_at
+sent
 ```
 
-Then, and every time you update your native dependencies, run:
+Where:
 
-```sh
-bundle exec pod install
+* `payload` = JSON data
+* `collected_at` = Timestamp
+* `sent` = 0 or 1
+
+---
+
+## REST API
+
+Receives batched usage data.
+
+Example:
+
+```
+POST /api/device/usage
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
+Example payload:
 
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
+```json
+{
+  "entries": [
+    {
+      "packageName": "com.facebook.katana",
+      "rxBytes": 120000,
+      "txBytes": 80000,
+      "timestamp": 1785123000
+    }
+  ]
+}
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+---
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+# Data Collection Flow
 
-## Step 3: Modify your app
+```
+Every Hour
 
-Now that you have successfully run the app, let's make changes!
+        │
+        ▼
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+Run Background Task
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+        │
+        ▼
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+Read NetworkStatsManager
 
-## Congratulations! :tada:
+        │
+        ▼
 
-You've successfully run and modified your React Native App. :partying_face:
+Convert to JSON
 
-### Now what?
+        │
+        ▼
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+Insert into SQLite Queue
 
-# Troubleshooting
+        │
+        ▼
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+Wait for Send Trigger
+```
 
-# Learn More
+---
 
-To learn more about React Native, take a look at the following resources:
+# Sending Flow
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+```
+Trigger Received
+
+        │
+        ▼
+
+Read unsent rows
+
+        │
+        ▼
+
+Create batch payload
+
+        │
+        ▼
+
+POST to REST API
+
+        │
+        ▼
+
+Success?
+
+   YES              NO
+
+Mark sent      Keep in queue
+```
+
+---
+
+# Why Queue First?
+
+Instead of sending every hour:
+
+```
+Collect
+↓
+
+Immediately Send
+↓
+
+Network Failure
+
+↓
+
+Data Lost
+```
+
+We instead:
+
+```
+Collect
+
+↓
+
+Store
+
+↓
+
+Retry Later
+
+↓
+
+No Data Loss
+```
+
+---
+
+# Background Execution
+
+JavaScript timers are **not reliable** while the app is:
+
+* In the background
+* Swiped away
+* Killed by Android
+
+Therefore, background collection should use native scheduling.
+
+Recommended options:
+
+* WorkManager (Preferred)
+* react-native-background-fetch (uses native scheduling internally)
+
+---
+
+# Permissions
+
+## Usage Access Permission
+
+Required:
+
+```
+android.permission.PACKAGE_USAGE_STATS
+```
+
+This is **not** a normal runtime permission.
+
+The application must redirect the user to:
+
+```
+Settings > Usage Access
+```
+
+where the user manually grants permission.
+
+---
+
+## Internet
+
+```xml
+<uses-permission android:name="android.permission.INTERNET" />
+```
+
+---
+
+## Receive Boot Completed
+
+(Optional)
+
+Allows background jobs to resume after device restart.
+
+```xml
+<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
+```
+
+---
+
+# Suggested Project Structure
+
+```
+src/
+│
+├── database/
+│     sqlite.ts
+│
+├── services/
+│     UsageCollector.ts
+│     SyncService.ts
+│
+├── native/
+│     NetworkUsageModule.ts
+│
+├── background/
+│     BackgroundTask.ts
+│
+├── notifications/
+│     FirebaseHandler.ts
+│
+└── api/
+      usageApi.ts
+```
+
+Android:
+
+```
+android/
+
+├── NetworkUsageModule.kt
+├── UsageWorker.kt
+└── MainApplication.kt
+```
+
+---
+
+# Future Enhancements
+
+* Wi-Fi and Mobile usage separation
+* Device information
+* Battery level during collection
+* Charging status
+* Foreground application detection
+* Daily aggregated reports
+* Retry strategy with exponential backoff
+* Data compression before upload
+* Upload only on Wi-Fi (optional)
+* Encryption of locally stored usage data
+
+---
+
+# Advantages of This Architecture
+
+* Reliable background collection
+* Works while offline
+* Prevents data loss
+* Efficient batch uploads
+* Reduces API calls
+* Easy to retry failed uploads
+* Scalable for additional telemetry data
+
+---
+
+# Development Roadmap
+
+## Phase 1
+
+* Create React Native project
+* Integrate SQLite
+* Create Android Native Module
+* Read NetworkStatsManager
+
+---
+
+## Phase 2
+
+* Implement WorkManager
+* Collect data every hour
+* Save snapshots to SQLite
+
+---
+
+## Phase 3
+
+* Build REST API integration
+* Batch upload queued data
+* Mark uploaded records as sent
+
+---
+
+## Phase 4
+
+* Integrate Firebase Cloud Messaging
+* Trigger uploads through data-only push notifications
+* Add retry and failure handling
+
+---
+
+# Notes
+
+* This implementation targets **Android only**, as `NetworkStatsManager` is not available on iOS.
+* Background task execution intervals are managed by Android and may not run at the exact requested time due to battery optimization policies (Doze Mode, App Standby, OEM restrictions).
+* User consent and transparency are important. Inform users why Usage Access permission is required and how the collected data will be used.
