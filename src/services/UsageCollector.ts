@@ -4,35 +4,22 @@ import {
 } from '../native/NetworkUsageModule';
 import { insertUsageRecord } from '../database/sqlite';
 
-/**
- * Ilang oras paatras kukunin ang usage data kada collection cycle.
- * Kung every-hour tumatakbo ang background job, 1 hour ang sapat na window.
- */
 const COLLECTION_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
-/**
- * Resulta ng isang collection attempt — useful para sa logging/debugging
- * o para malaman ng caller (hal. background task) kung ano ang nangyari.
- */
 export interface CollectionResult {
   success: boolean;
   recordCount: number;
   reason?: string;
 }
 
-/**
- * Pangunahing function na:
- * 1. Chinicheck kung may Usage Access permission
- * 2. Kinukuha ang network usage stats mula sa native module
- * 3. Ini-insert ang resulta sa SQLite queue (hindi pa sinesend kahit saan)
- *
- * Ito ang function na tatawagin ng background job kada oras.
- */
 export async function collectAndStoreUsage(): Promise<CollectionResult> {
+  console.log('[UsageCollector] Simula ng collection...');
   try {
     const permitted = await hasUsageAccessPermission();
+    console.log('[UsageCollector] hasUsageAccessPermission:', permitted);
 
     if (!permitted) {
+      console.log('[UsageCollector] BLOCKED — walang Usage Access permission.');
       return {
         success: false,
         recordCount: 0,
@@ -42,10 +29,13 @@ export async function collectAndStoreUsage(): Promise<CollectionResult> {
 
     const now = Date.now();
     const startTime = now - COLLECTION_WINDOW_MS;
+    console.log('[UsageCollector] Query window:', new Date(startTime), '->', new Date(now));
 
     const entries = await getUsageStats(startTime, now);
+    console.log('[UsageCollector] Entries mula sa native module:', entries?.length, entries);
 
     if (!entries || entries.length === 0) {
+      console.log('[UsageCollector] Walang entries — walang ipapasok sa DB.');
       return {
         success: true,
         recordCount: 0,
@@ -53,13 +43,15 @@ export async function collectAndStoreUsage(): Promise<CollectionResult> {
       };
     }
 
-    await insertUsageRecord(entries);
+    const insertedId = await insertUsageRecord(entries);
+    console.log('[UsageCollector] Na-insert, id:', insertedId);
 
     return {
       success: true,
       recordCount: entries.length,
     };
   } catch (error) {
+    console.log('[UsageCollector] ERROR:', error);
     return {
       success: false,
       recordCount: 0,

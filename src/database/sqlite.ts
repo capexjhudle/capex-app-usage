@@ -61,6 +61,7 @@ async function getDb(): Promise<SQLite.SQLiteDatabase> {
  * ng NetworkUsageEntry mula sa native module).
  */
 export async function insertUsageRecord(payload: unknown): Promise<number> {
+  console.log('[sqlite] insertUsageRecord called, payload length:', Array.isArray(payload) ? payload.length : 'n/a');
   const db = await getDb();
   const payloadString = JSON.stringify(payload);
   const collectedAt = Date.now();
@@ -70,6 +71,7 @@ export async function insertUsageRecord(payload: unknown): Promise<number> {
     [payloadString, collectedAt]
   );
 
+  console.log('[sqlite] Insert result — insertId:', result.insertId, 'rowsAffected:', result.rowsAffected);
   return result.insertId;
 }
 
