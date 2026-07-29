@@ -31,39 +31,45 @@
               val resultArray: WritableArray = Arguments.createArray()
               val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
 
+              // Mapa ng uid -> packageName, para hindi na natin kailangang mag-loop
+              // ulit sa installedApps kada network type
+              val uidToPackageName = installedApps.associateBy({ it.uid }, { it.packageName })
+
               // TYPE_MOBILE -> "data", TYPE_WIFI -> "wifi"
               val networkTypes = mapOf(
                   ConnectivityManager.TYPE_MOBILE to "data",
                   ConnectivityManager.TYPE_WIFI to "wifi"
               )
 
-              for (appInfo in installedApps) {
-                  val uid = appInfo.uid
+              // Ang query ay ONCE lang per network type (hindi na per-app)
+              for ((networkType, typeLabel) in networkTypes) {
+                  try {
+                      val stats: NetworkStats = networkStatsManager.querySummary(
+                          networkType,
+                          null,
+                          startTime.toLong(),
+                          endTime.toLong()
+                      )
 
-                  for ((networkType, typeLabel) in networkTypes) {
-                      try {
-                          val stats: NetworkStats = networkStatsManager.querySummary(
-                              networkType,
-                              null,
-                              startTime.toLong(),
-                              endTime.toLong()
-                          )
+                      // Mag-accumulate muna tayo ng totals per uid
+                      val usageByUid = mutableMapOf<Int, Pair<Long, Long>>() // uid -> (rxBytes, txBytes)
+                      val bucket = NetworkStats.Bucket()
 
-                          var rxBytes = 0L
-                          var txBytes = 0L
-                          val bucket = NetworkStats.Bucket()
-                          while (stats.hasNextBucket()) {
-                              stats.getNextBucket(bucket)
-                              if (bucket.uid == uid) {
-                                  rxBytes += bucket.rxBytes
-                                  txBytes += bucket.txBytes
-                              }
-                          }
-                          stats.close()
+                      while (stats.hasNextBucket()) {
+                          stats.getNextBucket(bucket)
+                          val existing = usageByUid[bucket.uid] ?: (0L to 0L)
+                          usageByUid[bucket.uid] = (existing.first + bucket.rxBytes) to (existing.second + bucket.txBytes)
+                      }
+                      stats.close()
+
+                      // Ngayon, i-match natin sa mga installed apps
+                      for ((uid, totals) in usageByUid) {
+                          val (rxBytes, txBytes) = totals
+                          val packageName = uidToPackageName[uid] ?: continue // skip kung walang katugmang app
 
                           if (rxBytes > 0 || txBytes > 0) {
                               val entry: WritableMap = Arguments.createMap()
-                              entry.putString("packageName", appInfo.packageName)
+                              entry.putString("packageName", packageName)
                               entry.putInt("uid", uid)
                               entry.putDouble("rxBytes", rxBytes.toDouble())
                               entry.putDouble("txBytes", txBytes.toDouble())
@@ -71,12 +77,12 @@
                               entry.putString("type", typeLabel)
                               resultArray.pushMap(entry)
                           }
-                      } catch (inner: Exception) {
-                          android.util.Log.w(
-                              "NetworkUsageModule",
-                              "querySummary failed type=$typeLabel uid=$uid: ${inner.message}"
-                          )
                       }
+                  } catch (inner: Exception) {
+                      android.util.Log.w(
+                          "NetworkUsageModule",
+                          "querySummary failed type=$typeLabel: ${inner.message}"
+                      )
                   }
               }
 
