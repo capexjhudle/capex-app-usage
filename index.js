@@ -9,5 +9,4 @@ import { headlessTask } from './src/background/BackgroundTask';
 import BackgroundFetch from 'react-native-background-fetch';
 
 AppRegistry.registerComponent(appName, () => App);
-AppRegistry.registerComponent(appName, () => App);
 BackgroundFetch.registerHeadlessTask(headlessTask);

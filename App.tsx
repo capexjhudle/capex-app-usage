@@ -27,6 +27,9 @@ import {
   openUsageAccessSettings,
 } from './src/native/NetworkUsageModule';
 
+import RegistrationScreen from './src/screens/RegistrationScreen';
+import { isUserRegistered } from './src/database/sqlite';
+
 // Mga app na gusto lang ipakita sa UI
 const TARGET_PACKAGES = [
   'com.viber.voip',
@@ -59,16 +62,33 @@ interface DisplayEntry extends FormattedUsageEntry {
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
+  const [checkingRegistration, setCheckingRegistration] = useState(true);
+  const [isRegistered, setIsRegistered] = useState(false);
 
   useEffect(() => {
-    initDatabase();
-    configureBackgroundTask();
+    (async () => {
+      await initDatabase();
+      configureBackgroundTask();
+
+      const registered = await isUserRegistered();
+      setIsRegistered(registered);
+      setCheckingRegistration(false);
+    })();
   }, []);
+
+  if (checkingRegistration) {
+    // pwede ka rin maglagay ng splash/loading UI dito
+    return null;
+  }
 
   return (
     <SafeAreaProvider>
       <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
+      {isRegistered ? (
+        <AppContent />
+      ) : (
+        <RegistrationScreen onRegistered={() => setIsRegistered(true)} />
+      )}
     </SafeAreaProvider>
   );
 }

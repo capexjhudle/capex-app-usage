@@ -40,6 +40,18 @@ export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
     );
   `);
 
+  // ↓↓↓ IDAGDAG MO ITO DITO ↓↓↓
+  await db.executeSql(`
+    CREATE TABLE IF NOT EXISTS user_profile (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      phone TEXT NOT NULL,
+      device_id TEXT NOT NULL,
+      registered_at INTEGER NOT NULL
+    );
+  `);
+
   dbInstance = db;
   return db;
 }
@@ -147,4 +159,64 @@ export async function deleteOldSentRecords(olderThanMs: number): Promise<void> {
     `DELETE FROM ${TABLE_NAME} WHERE sent = 1 AND collected_at < ?;`,
     [cutoff]
   );
+}
+
+// ↓↓↓ IDAGDAG MO ITONG LAHAT DITO, DULO NG FILE ↓↓↓
+
+/**
+ * Shape ng user profile row
+ */
+export interface UserProfileRow {
+  id: number;
+  name: string;
+  email: string;
+  phone: string;
+  device_id: string;
+  registered_at: number;
+}
+
+/**
+ * I-save ang registration info ng user. Isang beses lang dapat
+ * ito tumakbo — sa first launch.
+ */
+export async function saveUserProfile(
+  name: string,
+  email: string,
+  phone: string,
+  deviceId: string
+): Promise<number> {
+  const db = await getDb();
+  const registeredAt = Date.now();
+
+  const [result] = await db.executeSql(
+    `INSERT INTO user_profile (name, email, phone, device_id, registered_at) VALUES (?, ?, ?, ?, ?);`,
+    [name, email, phone, deviceId, registeredAt]
+  );
+
+  return result.insertId;
+}
+
+/**
+ * Kunin ang naka-save na profile, kung meron. Null kung wala pang
+ * nag-rerehistro (ibig sabihin, first launch pa).
+ */
+export async function getUserProfile(): Promise<UserProfileRow | null> {
+  const db = await getDb();
+  const [result] = await db.executeSql(
+    `SELECT * FROM user_profile ORDER BY id DESC LIMIT 1;`
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  return result.rows.item(0);
+}
+
+/**
+ * Mabilis na check kung naka-rehistro na ang device na ito.
+ */
+export async function isUserRegistered(): Promise<boolean> {
+  const profile = await getUserProfile();
+  return profile !== null;
 }
