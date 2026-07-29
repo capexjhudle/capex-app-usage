@@ -19,7 +19,6 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
-// import { initDatabase, getAllRecords, UsageQueueRow } from './src/database/sqlite';
 import { initDatabase, getAllRecords, UsageQueueRow } from './src/database/sqlite';
 import { configureBackgroundTask } from './src/background/BackgroundTask';
 import { collectAndStoreUsage } from './src/services/UsageCollector';
@@ -27,6 +26,36 @@ import {
   hasUsageAccessPermission,
   openUsageAccessSettings,
 } from './src/native/NetworkUsageModule';
+
+// Mga app na gusto lang ipakita sa UI
+const TARGET_PACKAGES = [
+  'com.viber.voip',
+  'com.android.chrome',
+  'com.google.android.apps.maps',
+  'com.waze',
+  'com.cis3mobileapp.app',
+];
+
+const APP_DISPLAY_NAMES: Record<string, string> = {
+  'com.viber.voip': 'Viber',
+  'com.android.chrome': 'Google Chrome',
+  'com.google.android.apps.maps': 'Google Maps',
+  'com.waze': 'Waze',
+  'com.cis3mobileapp.app': 'OM Mobile App',
+};
+
+interface FormattedUsageEntry {
+  packageName: string;
+  uid: number;
+  type: 'wifi' | 'data';
+  downloadSize: string;
+  uploadSize: string;
+  timestamp: string;
+}
+
+interface DisplayEntry extends FormattedUsageEntry {
+  recordId: number;
+}
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
@@ -51,7 +80,23 @@ function AppContent() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [status, setStatus] = useState<string>('');
 
-  // I-refresh ang listahan mula sa SQLite
+  // Lahat ng records mula sa DB, pero i-filter/flatten lang yung 5 target apps
+  const displayEntries: DisplayEntry[] = records.flatMap((record) => {
+    try {
+      console.log(`Payload (Record ID: ${record.id})`);
+      console.log(record.payload);
+
+      const parsed: FormattedUsageEntry[] = JSON.parse(record.payload);
+
+      return parsed
+        .filter((entry) => TARGET_PACKAGES.includes(entry.packageName))
+        .map((entry) => ({ ...entry, recordId: record.id }));
+    } catch (error) {
+      console.error(`Failed to parse payload for record ${record.id}:`, error);
+      return [];
+    }
+  });
+
   const loadRecords = useCallback(async () => {
     const rows = await getAllRecords();
     setRecords(rows);
@@ -122,26 +167,31 @@ function AppContent() {
       {status ? <Text style={styles.status}>{status}</Text> : null}
 
       <Text style={styles.subtitle}>
-        Naka-save na records ({records.length})
+        Napiling apps ({displayEntries.length})
       </Text>
 
       <FlatList
-        data={records}
-        keyExtractor={(item) => String(item.id)}
+        data={displayEntries}
+        keyExtractor={(item, index) => `${item.recordId}-${item.packageName}-${item.type}-${index}`}
         contentContainerStyle={styles.listContent}
         renderItem={({ item }) => (
           <View style={styles.recordItem}>
+            <Text style={styles.appName}>
+              {APP_DISPLAY_NAMES[item.packageName] ?? item.packageName}
+            </Text>
             <Text style={styles.recordMeta}>
-              #{item.id} • {new Date(item.collected_at).toLocaleString()} •{' '}
-              {item.sent ? 'Sent' : 'Not sent'}
+              {item.type === 'wifi' ? '📶 WiFi' : '📱 Mobile Data'} • {item.timestamp}
             </Text>
-            <Text style={styles.recordPayload} numberOfLines={3}>
-              {item.payload}
-            </Text>
+            <View style={styles.dataRow}>
+              <Text style={styles.recordPayload}>⬇ Download: {item.downloadSize}</Text>
+              <Text style={styles.recordPayload}>⬆ Upload: {item.uploadSize}</Text>
+            </View>
           </View>
         )}
         ListEmptyComponent={
-          <Text style={styles.emptyText}>Wala pang naka-save na data.</Text>
+          <Text style={styles.emptyText}>
+            Wala pang na-detect na usage para sa mga napiling apps.
+          </Text>
         }
       />
     </View>
@@ -206,17 +256,28 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   recordItem: {
-    padding: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e5e7eb',
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#f9fafb',
+    marginBottom: 8,
+  },
+  appName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 2,
   },
   recordMeta: {
     fontSize: 12,
     color: '#6b7280',
-    marginBottom: 4,
+    marginBottom: 6,
+  },
+  dataRow: {
+    flexDirection: 'row',
+    gap: 16,
   },
   recordPayload: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#111827',
   },
   emptyText: {

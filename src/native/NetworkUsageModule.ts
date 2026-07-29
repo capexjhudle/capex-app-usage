@@ -9,6 +9,7 @@ export interface NetworkUsageEntry {
   rxBytes: number;
   txBytes: number;
   timestamp: number;
+  type: 'wifi' | 'data';
 }
 
 /**

@@ -29,44 +29,54 @@
               val packageManager = context.packageManager
 
               val resultArray: WritableArray = Arguments.createArray()
-
               val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
 
+              // TYPE_MOBILE -> "data", TYPE_WIFI -> "wifi"
+              val networkTypes = mapOf(
+                  ConnectivityManager.TYPE_MOBILE to "data",
+                  ConnectivityManager.TYPE_WIFI to "wifi"
+              )
+
               for (appInfo in installedApps) {
-                  try {
-                      val uid = appInfo.uid
+                  val uid = appInfo.uid
 
-                      val mobileBucket: NetworkStats = networkStatsManager.querySummary(
-                          ConnectivityManager.TYPE_MOBILE,
-                          null,
-                          startTime.toLong(),
-                          endTime.toLong()
-                      )
+                  for ((networkType, typeLabel) in networkTypes) {
+                      try {
+                          val stats: NetworkStats = networkStatsManager.querySummary(
+                              networkType,
+                              null,
+                              startTime.toLong(),
+                              endTime.toLong()
+                          )
 
-                      var rxBytes = 0L
-                      var txBytes = 0L
-
-                      val bucket = NetworkStats.Bucket()
-                      while (mobileBucket.hasNextBucket()) {
-                          mobileBucket.getNextBucket(bucket)
-                          if (bucket.uid == uid) {
-                              rxBytes += bucket.rxBytes
-                              txBytes += bucket.txBytes
+                          var rxBytes = 0L
+                          var txBytes = 0L
+                          val bucket = NetworkStats.Bucket()
+                          while (stats.hasNextBucket()) {
+                              stats.getNextBucket(bucket)
+                              if (bucket.uid == uid) {
+                                  rxBytes += bucket.rxBytes
+                                  txBytes += bucket.txBytes
+                              }
                           }
-                      }
-                      mobileBucket.close()
+                          stats.close()
 
-                      if (rxBytes > 0 || txBytes > 0) {
-                          val entry: WritableMap = Arguments.createMap()
-                          entry.putString("packageName", appInfo.packageName)
-                          entry.putInt("uid", uid)
-                          entry.putDouble("rxBytes", rxBytes.toDouble())
-                          entry.putDouble("txBytes", txBytes.toDouble())
-                          entry.putDouble("timestamp", System.currentTimeMillis().toDouble())
-                          resultArray.pushMap(entry)
+                          if (rxBytes > 0 || txBytes > 0) {
+                              val entry: WritableMap = Arguments.createMap()
+                              entry.putString("packageName", appInfo.packageName)
+                              entry.putInt("uid", uid)
+                              entry.putDouble("rxBytes", rxBytes.toDouble())
+                              entry.putDouble("txBytes", txBytes.toDouble())
+                              entry.putDouble("timestamp", System.currentTimeMillis().toDouble())
+                              entry.putString("type", typeLabel)
+                              resultArray.pushMap(entry)
+                          }
+                      } catch (inner: Exception) {
+                          android.util.Log.w(
+                              "NetworkUsageModule",
+                              "querySummary failed type=$typeLabel uid=$uid: ${inner.message}"
+                          )
                       }
-                  } catch (e: Exception) {
-                      continue
                   }
               }
 

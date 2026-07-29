@@ -3,6 +3,7 @@ import {
   hasUsageAccessPermission,
 } from '../native/NetworkUsageModule';
 import { insertUsageRecord } from '../database/sqlite';
+import { formatBytes, formatTimestamp } from '../utils/format';
 
 const COLLECTION_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
@@ -10,6 +11,15 @@ export interface CollectionResult {
   success: boolean;
   recordCount: number;
   reason?: string;
+}
+
+export interface FormattedUsageEntry {
+  packageName: string;
+  uid: number;
+  type: 'wifi' | 'data';
+  downloadSize: string;
+  uploadSize: string;
+  timestamp: string;
 }
 
 export async function collectAndStoreUsage(): Promise<CollectionResult> {
@@ -43,12 +53,22 @@ export async function collectAndStoreUsage(): Promise<CollectionResult> {
       };
     }
 
-    const insertedId = await insertUsageRecord(entries);
+    // I-format bago i-save
+    const formattedEntries: FormattedUsageEntry[] = entries.map((entry) => ({
+      packageName: entry.packageName,
+      uid: entry.uid,
+      type: entry.type,
+      downloadSize: formatBytes(entry.rxBytes),
+      uploadSize: formatBytes(entry.txBytes),
+      timestamp: formatTimestamp(entry.timestamp),
+    }));
+
+    const insertedId = await insertUsageRecord(formattedEntries);
     console.log('[UsageCollector] Na-insert, id:', insertedId);
 
     return {
       success: true,
-      recordCount: entries.length,
+      recordCount: formattedEntries.length,
     };
   } catch (error) {
     console.log('[UsageCollector] ERROR:', error);
