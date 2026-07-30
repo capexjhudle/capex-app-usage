@@ -4,6 +4,8 @@ SQLite.enablePromise(true);
 
 const DATABASE_NAME = 'usage_collector.db';
 const TABLE_NAME = 'usage_queue';
+const META_TABLE_NAME = 'collection_meta';
+const LAST_COLLECTION_END_KEY = 'last_collection_end';
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
 
@@ -49,6 +51,14 @@ export async function initDatabase(): Promise<SQLite.SQLiteDatabase> {
       phone TEXT NOT NULL,
       device_id TEXT NOT NULL,
       registered_at INTEGER NOT NULL
+    );
+  `);
+
+
+  await db.executeSql(`
+    CREATE TABLE IF NOT EXISTS collection_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
     );
   `);
 
@@ -219,4 +229,37 @@ export async function getUserProfile(): Promise<UserProfileRow | null> {
 export async function isUserRegistered(): Promise<boolean> {
   const profile = await getUserProfile();
   return profile !== null;
+}
+
+/**
+ * Kunin ang timestamp (ms) kung saan natapos ang HULING successful
+ * collection window. Null kung wala pa (unang beses pa lang).
+ */
+export async function getLastCollectionEndTime(): Promise<number | null> {
+  const db = await getDb();
+  const [result] = await db.executeSql(
+    `SELECT value FROM ${META_TABLE_NAME} WHERE key = ? LIMIT 1;`,
+    [LAST_COLLECTION_END_KEY]
+  );
+
+  if (result.rows.length === 0) {
+    return null;
+  }
+
+  const value = result.rows.item(0).value;
+  return value ? Number(value) : null;
+}
+
+/**
+ * I-save ang timestamp (ms) ng dulo ng huling successful collection window.
+ * Ito ang gagamiting `startTime` ng SUSUNOD na collection, para walang
+ * overlap at walang gap sa pagitan ng mga window.
+ */
+export async function setLastCollectionEndTime(timestamp: number): Promise<void> {
+  const db = await getDb();
+  await db.executeSql(
+    `INSERT INTO ${META_TABLE_NAME} (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value;`,
+    [LAST_COLLECTION_END_KEY, String(timestamp)]
+  );
 }

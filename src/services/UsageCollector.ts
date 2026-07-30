@@ -2,10 +2,16 @@ import {
   getUsageStats,
   hasUsageAccessPermission,
 } from '../native/NetworkUsageModule';
-import { insertUsageRecord } from '../database/sqlite';
+import {
+  insertUsageRecord,
+  getLastCollectionEndTime,
+  setLastCollectionEndTime,
+} from '../database/sqlite';
 import { formatBytes, formatTimestamp } from '../utils/format';
 
-const COLLECTION_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+// Fallback lang ito kapag WALA pang naka-save na huling collection
+// (hal. unang run pagka-install ng app)
+const FALLBACK_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 export interface CollectionResult {
   success: boolean;
@@ -19,6 +25,8 @@ export interface FormattedUsageEntry {
   type: 'wifi' | 'data';
   downloadSize: string;
   uploadSize: string;
+  downloadBytes: number; // ← raw bytes, para sa pag-compute/filter (hal. 100MB+)
+  uploadBytes: number; // ← raw bytes, para sa pag-compute/filter (hal. 100MB+)
   timestamp: string;
 }
 
@@ -38,14 +46,27 @@ export async function collectAndStoreUsage(): Promise<CollectionResult> {
     }
 
     const now = Date.now();
-    const startTime = now - COLLECTION_WINDOW_MS;
-    console.log('[UsageCollector] Query window:', new Date(startTime), '->', new Date(now));
+
+    // Gamitin ang dulo ng HULING successful collection bilang simula
+    // ng window na ito — para walang overlap (double-count) at walang
+    // gap (nawawalang data) sa pagitan ng mga collection.
+    const lastEndTime = await getLastCollectionEndTime();
+    const startTime = lastEndTime ?? now - FALLBACK_WINDOW_MS;
+
+    console.log(
+      '[UsageCollector] Query window:',
+      new Date(startTime),
+      '->',
+      new Date(now),
+      lastEndTime ? '(continuous mula sa huling collection)' : '(fallback 1-hour window)'
+    );
 
     const entries = await getUsageStats(startTime, now);
     console.log('[UsageCollector] Entries mula sa native module:', entries?.length, entries);
 
     if (!entries || entries.length === 0) {
       console.log('[UsageCollector] Walang entries — walang ipapasok sa DB.');
+      await setLastCollectionEndTime(now);
       return {
         success: true,
         recordCount: 0,
@@ -53,18 +74,22 @@ export async function collectAndStoreUsage(): Promise<CollectionResult> {
       };
     }
 
-    // I-format bago i-save
+    // I-format bago i-save (kasama na ang raw bytes para sa filtering)
     const formattedEntries: FormattedUsageEntry[] = entries.map((entry) => ({
       packageName: entry.packageName,
       uid: entry.uid,
       type: entry.type,
       downloadSize: formatBytes(entry.rxBytes),
       uploadSize: formatBytes(entry.txBytes),
+      downloadBytes: entry.rxBytes,
+      uploadBytes: entry.txBytes,
       timestamp: formatTimestamp(entry.timestamp),
     }));
 
     const insertedId = await insertUsageRecord(formattedEntries);
     console.log('[UsageCollector] Na-insert, id:', insertedId);
+
+    await setLastCollectionEndTime(now);
 
     return {
       success: true,
