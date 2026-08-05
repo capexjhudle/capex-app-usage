@@ -1,6 +1,6 @@
 import {
   getUnsentRecords,
-  markRecordsAsSent,
+  deleteSentRecords,
   UsageQueueRow,
 } from '../database/sqlite';
 import { sendUsagePayload, UsageApiEntry } from '../api/usageApi';
@@ -88,7 +88,11 @@ export function msUntilBlackoutEnds(date: Date = new Date()): number {
 
 /**
  * I-send ang lahat ng unsent records isa-isa papunta sa backend.
- * Bawat successful send ay ma-mamark na "sent" sa local DB.
+ *
+ * Ang bawat matagumpay na naipadala ay BINUBURA na sa local DB — nasa
+ * backend na kasi ito, at ayaw nating lumaki nang walang hanggan ang
+ * database sa phone. Ang hindi naipadala ay nananatili at susubukan ulit
+ * sa susunod na oras.
  */
 export async function syncPendingRecords(): Promise<SyncResult> {
   const blackout = findBlackoutWindow(new Date());
@@ -177,7 +181,10 @@ export async function syncPendingRecords(): Promise<SyncResult> {
   }
 
   if (sentIds.length > 0) {
-    await markRecordsAsSent(sentIds);
+    await deleteSentRecords(sentIds);
+    console.log(
+      `[SyncService] Binura sa local DB ang ${sentIds.length} record(s) na naipadala na.`
+    );
   }
 
   return {

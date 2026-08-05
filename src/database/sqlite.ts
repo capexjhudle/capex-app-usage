@@ -115,8 +115,11 @@ export async function getUnsentRecords(): Promise<UsageQueueRow[]> {
 }
 
 /**
- * Kunin LAHAT ng records (sent man o hindi) — useful para sa debugging
- * o sa pag-display ng history sa UI.
+ * Kunin lahat ng records na nasa DB pa.
+ *
+ * Dahil binubura na natin ang mga naipadala na (tingnan ang
+ * deleteSentRecords), ang laman nito ay ang mga HINDI PA naipapadala —
+ * ito ang ipinapakita sa UI.
  */
 export async function getAllRecords(): Promise<UsageQueueRow[]> {
   const db = await getDb();
@@ -132,16 +135,22 @@ export async function getAllRecords(): Promise<UsageQueueRow[]> {
 }
 
 /**
- * Markahan ang mga ibinigay na record IDs bilang sent = 1.
- * (Ito ay gagamitin sa susunod na phase, pagkatapos ng successful upload.)
+ * Burahin na ang mga record na matagumpay nang naipadala sa API.
+ *
+ * DELETE ito (hindi na lang pag-mark ng sent = 1) para hindi lumaki nang
+ * walang hanggan ang local DB — ang backend na ang mapagkukunan ng history.
+ *
+ * Ibig sabihin nito, ang natitira sa `usage_queue` ay puro `sent = 0` na
+ * lang — mga hindi pa naipapadala. Hindi na mababawi ang mga naipadala na,
+ * kaya siguraduhing tumatanggap talaga ang server bago ito tawagin.
  */
-export async function markRecordsAsSent(ids: number[]): Promise<void> {
+export async function deleteSentRecords(ids: number[]): Promise<void> {
   if (ids.length === 0) return;
 
   const db = await getDb();
   const placeholders = ids.map(() => '?').join(', ');
   await db.executeSql(
-    `UPDATE ${TABLE_NAME} SET sent = 1 WHERE id IN (${placeholders});`,
+    `DELETE FROM ${TABLE_NAME} WHERE id IN (${placeholders});`,
     ids
   );
 }
@@ -156,19 +165,6 @@ export async function countUnsentRecords(): Promise<number> {
     `SELECT COUNT(*) as count FROM ${TABLE_NAME} WHERE sent = 0;`
   );
   return result.rows.item(0).count;
-}
-
-/**
- * Burahin ang mga record na sent = 1 at mas matanda sa `olderThanMs`.
- * Optional cleanup function para hindi lumaki ng sobra ang local DB.
- */
-export async function deleteOldSentRecords(olderThanMs: number): Promise<void> {
-  const db = await getDb();
-  const cutoff = Date.now() - olderThanMs;
-  await db.executeSql(
-    `DELETE FROM ${TABLE_NAME} WHERE sent = 1 AND collected_at < ?;`,
-    [cutoff]
-  );
 }
 
 // ↓↓↓ IDAGDAG MO ITONG LAHAT DITO, DULO NG FILE ↓↓↓

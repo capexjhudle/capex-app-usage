@@ -453,8 +453,12 @@ function AppContent() {
 
       {status ? <Text style={styles.status}>{status}</Text> : null}
 
+      {/*
+        Binubura na sa local DB ang mga naipadala na, kaya ang natitira dito
+        ay yung mga nakapila pa lang — hindi na ito history ng lahat.
+      */}
       <Text style={styles.subtitle}>
-        Napiling apps ({displayEntries.length})
+        Nakapila pa ({displayEntries.length})
       </Text>
 
       <FlatList
@@ -510,8 +514,9 @@ function AppContent() {
         ListEmptyComponent={
           <Text style={styles.emptyText}>
             {showHighUsageOnly
-              ? 'Walang entries na 100MB pataas.'
-              : 'Wala pang na-detect na usage para sa mga napiling apps.'}
+              ? 'Walang nakapilang entries na 100MB pataas.'
+              : 'Walang nakapila — naipadala na sa server ang lahat.\n' +
+                'Normal ito: binubura ang record kapag matagumpay na naisend.'}
           </Text>
         }
       />
