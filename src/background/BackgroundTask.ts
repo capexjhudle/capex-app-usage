@@ -1,8 +1,12 @@
 import BackgroundFetch from 'react-native-background-fetch';
 import { collectAndStoreUsage } from '../services/UsageCollector';
+import { syncPendingRecords, isInBlackoutWindow } from '../services/SyncService';
+
 
 // Custom task ID para sa aming "on-the-hour" scheduling (5pm, 6pm, 7pm...)
 const HOURLY_TASK_ID = 'com.capexusagecollector.hourly-collect';
+const SYNC_TASK_ID = 'com.capexusagecollector.sync-usage';
+const SYNC_INTERVAL_MS = 4 * 60 * 60 * 1000; // 4 hours
 
 /**
  * Kinukwenta kung ilang milliseconds na lang bago sumapit ang
@@ -79,26 +83,22 @@ export async function configureBackgroundTask(): Promise<void> {
       requiresStorageNotLow: false,
     },
     async (taskId: string) => {
-      // Ito ang tatawagin tuwing may fire na task (kahit periodic o scheduled)
       console.log('[BackgroundTask] Nag-fire ang task:', taskId);
 
       if (taskId === HOURLY_TASK_ID) {
-        // Ito yung sarili nating "on-the-hour" schedule
         await runHourlyCollection(taskId);
+      } else if (taskId === SYNC_TASK_ID) {
+        await runScheduledSync(taskId);
       } else {
-        // Default periodic fetch (fallback lang, hindi na "on-the-hour")
+        // default periodic fetch (fallback)
         const result = await collectAndStoreUsage();
-
         if (result.success) {
-          console.log(
-            `[BackgroundTask] Successful collection: ${result.recordCount} records na-store.`
-          );
+          console.log(`[BackgroundTask] Successful collection: ${result.recordCount} records na-store.`);
         } else {
           console.warn('[BackgroundTask] Nabigo ang collection:', result.reason);
         }
       }
 
-      // MAHALAGA: laging tawagin ito para malaman ng OS na tapos na ang task
       BackgroundFetch.finish(taskId);
     },
     (taskId: string) => {
@@ -113,6 +113,7 @@ export async function configureBackgroundTask(): Promise<void> {
 
   // Simulan ang unang "on-the-hour" schedule (5pm, 6pm, 7pm, atbp.)
   scheduleNextHourlyCollection();
+  scheduleNextSync();
 }
 
 /**
@@ -122,6 +123,7 @@ export async function configureBackgroundTask(): Promise<void> {
 export async function stopBackgroundTask(): Promise<void> {
   await BackgroundFetch.stop();
   await BackgroundFetch.stop(HOURLY_TASK_ID);
+  await BackgroundFetch.stop(SYNC_TASK_ID);
 }
 
 /**
@@ -135,6 +137,8 @@ export async function headlessTask(event: { taskId: string }): Promise<void> {
 
   if (taskId === HOURLY_TASK_ID) {
     await runHourlyCollection(taskId);
+  } else if (taskId === SYNC_TASK_ID) {
+    await runScheduledSync(taskId);
   } else {
     const result = await collectAndStoreUsage();
 
@@ -148,4 +152,59 @@ export async function headlessTask(event: { taskId: string }): Promise<void> {
   }
 
   BackgroundFetch.finish(taskId);
+}
+
+/**
+ * Kinukwenta ang delay papunta sa susunod na sync slot (base: +4 hours).
+ * Kung tatama ito sa blackout window (12nn / 6:30pm backup), idadagdag
+ * pa ng 20 minuto paulit-ulit hanggang malinis na ang oras.
+ */
+function msUntilNextSyncTime(): number {
+  let delay = SYNC_INTERVAL_MS;
+  let candidate = new Date(Date.now() + delay);
+
+  while (isInBlackoutWindow(candidate)) {
+    delay += 20 * 60 * 1000;
+    candidate = new Date(Date.now() + delay);
+  }
+
+  return delay;
+}
+
+/**
+ * I-schedule ang susunod na "send to API" run (every ~4 hours,
+ * iniiwasan ang 12:00 nn at 6:30 pm).
+ */
+export function scheduleNextSync(): void {
+  const delay = msUntilNextSyncTime();
+
+  BackgroundFetch.scheduleTask({
+    taskId: SYNC_TASK_ID,
+    delay,
+    periodic: false,
+    forceAlarmManager: true,
+    stopOnTerminate: false,
+    enableHeadless: true,
+  });
+
+  console.log(
+    `[SyncTask] Naka-schedule ang susunod na sync sa loob ng ${(delay / 1000 / 60).toFixed(1)} minuto`
+  );
+}
+
+async function runScheduledSync(taskId: string): Promise<void> {
+  console.log('[SyncTask] Tumakbo ang scheduled sync:', taskId);
+
+  const result = await syncPendingRecords();
+
+  if (result.success) {
+    console.log(
+      `[SyncTask] Tapos ang sync. Naipadala: ${result.sentCount}, nabigo: ${result.failedCount}`
+    );
+  } else {
+    console.warn('[SyncTask] May problema sa sync:', result.reason);
+  }
+
+  // MAHALAGA: i-schedule agad ang susunod bago matapos ang task
+  scheduleNextSync();
 }

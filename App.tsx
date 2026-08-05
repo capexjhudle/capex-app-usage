@@ -7,6 +7,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   StatusBar,
   StyleSheet,
@@ -19,12 +20,20 @@ import {
   SafeAreaProvider,
   useSafeAreaInsets,
 } from 'react-native-safe-area-context';
-import { initDatabase, getAllRecords, UsageQueueRow } from './src/database/sqlite';
+import {
+  initDatabase,
+  getAllRecords,
+  countUnsentRecords,
+  getUserProfile,
+  UsageQueueRow,
+} from './src/database/sqlite';
+import { syncPendingRecords } from './src/services/SyncService';
 import { configureBackgroundTask } from './src/background/BackgroundTask';
 import { collectAndStoreUsage } from './src/services/UsageCollector';
 import {
   hasUsageAccessPermission,
   openUsageAccessSettings,
+  getAppVersion,
 } from './src/native/NetworkUsageModule';
 
 import RegistrationScreen from './src/screens/RegistrationScreen';
@@ -59,6 +68,8 @@ interface FormattedUsageEntry {
   downloadBytes: number;
   uploadBytes: number;
   timestamp: string;
+  versionName?: string;
+  versionCode?: number;
 }
 
 interface DisplayEntry extends FormattedUsageEntry {
@@ -106,6 +117,14 @@ function AppContent() {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [status, setStatus] = useState<string>('');
   const [showHighUsageOnly, setShowHighUsageOnly] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncing, setSyncing] = useState(false);
+  // Device ID na naka-tali sa registration — ito ang ipinapadala natin
+  // sa API bilang `device_id`.
+  const [registeredDeviceId, setRegisteredDeviceId] = useState<string | null>(null);
+  // packageName -> version string, live mula sa PackageManager. Ito ang
+  // ginagamit kapag walang naka-store na version sa record (hal. lumang record).
+  const [appVersions, setAppVersions] = useState<Record<string, string>>({});
 
   // Lahat ng records mula sa DB, pero i-filter/flatten lang yung 5 target apps
   const allDisplayEntries: DisplayEntry[] = records.flatMap((record) => {
@@ -144,17 +163,81 @@ function AppContent() {
   const loadRecords = useCallback(async () => {
     const rows = await getAllRecords();
     setRecords(rows);
+    setPendingCount(await countUnsentRecords());
   }, []);
+
+  /**
+   * Manual na pag-send ng lahat ng hindi pa naipapadalang records.
+   * Pareho lang ito ng ginagawa ng scheduled sync — kasama na ang
+   * pag-iwas sa oras ng system backup (12nn at 6:30pm).
+   */
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    setStatus('Nagsi-sync...');
+
+    try {
+      const result = await syncPendingRecords();
+
+      if (result.reason && result.sentCount === 0 && result.failedCount === 0) {
+        // Walang naipadala — hal. naka-skip dahil sa backup window,
+        // o wala talagang pending.
+        setStatus(result.reason);
+      } else if (result.success) {
+        setStatus(`Naipadala: ${result.sentCount} record(s)`);
+      } else {
+        setStatus(
+          `Naipadala: ${result.sentCount}, nabigo: ${result.failedCount}. ${result.reason ?? ''}`
+        );
+      }
+    } catch (error) {
+      console.error('[App] Nabigo ang manual sync:', error);
+      setStatus(
+        error instanceof Error ? `Error: ${error.message}` : 'Hindi kilalang error sa sync.'
+      );
+    } finally {
+      setSyncing(false);
+      await loadRecords();
+    }
+  }, [loadRecords]);
 
   const checkPermission = useCallback(async () => {
     const granted = await hasUsageAccessPermission();
     setHasPermission(granted);
   }, []);
 
+  const loadRegisteredDeviceId = useCallback(async () => {
+    const profile = await getUserProfile();
+    setRegisteredDeviceId(profile?.device_id ?? null);
+  }, []);
+
+  // Kunin ang version ng bawat target app diretso sa PackageManager.
+  // Dito rin natin makikita kung nare-resolve nga ba ang com.cis3mobileapp.app.
+  const loadAppVersions = useCallback(async () => {
+    const results = await Promise.all(
+      TARGET_PACKAGES.map(async (pkg) => {
+        try {
+          const info = await getAppVersion(pkg);
+          console.log(`[AppVersion] ${pkg}:`, info);
+          return [
+            pkg,
+            info.installed ? info.versionName || '(walang versionName)' : '',
+          ] as const;
+        } catch (error) {
+          console.warn(`[AppVersion] Nabigo ang lookup para sa ${pkg}:`, error);
+          return [pkg, ''] as const;
+        }
+      })
+    );
+
+    setAppVersions(Object.fromEntries(results.filter(([, v]) => v)));
+  }, []);
+
   useEffect(() => {
     checkPermission();
     loadRecords();
-  }, [checkPermission, loadRecords]);
+    loadAppVersions();
+    loadRegisteredDeviceId();
+  }, [checkPermission, loadRecords, loadAppVersions, loadRegisteredDeviceId]);
 
   const handleManualCollect = async () => {
     setStatus('Kinokolekta...');
@@ -179,6 +262,13 @@ function AppContent() {
       ]}
     >
       <Text style={styles.title}>Usage Data Collector</Text>
+
+      <View style={styles.deviceIdBox}>
+        <Text style={styles.deviceIdLabel}>Registered Device ID</Text>
+        <Text style={styles.deviceIdValue} selectable>
+          {registeredDeviceId ?? 'Wala pang naka-register'}
+        </Text>
+      </View>
 
       <View style={styles.permissionBox}>
         <Text style={styles.permissionText}>
@@ -211,6 +301,22 @@ function AppContent() {
         {/* <TouchableOpacity style={styles.button} onPress={handleManualCollect}>
           <Text style={styles.buttonText}>I-collect Ngayon</Text>
         </TouchableOpacity> */}
+        <TouchableOpacity
+          style={[
+            styles.button,
+            (syncing || pendingCount === 0) && styles.buttonDisabled,
+          ]}
+          onPress={handleSync}
+          disabled={syncing || pendingCount === 0}
+        >
+          {syncing ? (
+            <ActivityIndicator size="small" color="#fff" />
+          ) : (
+            <Text style={styles.buttonText}>
+              {pendingCount > 0 ? `I-sync (${pendingCount})` : 'Walang Pending'}
+            </Text>
+          )}
+        </TouchableOpacity>
         <TouchableOpacity style={styles.buttonSecondary} onPress={loadRecords}>
           <Text style={styles.buttonText}>Refresh</Text>
         </TouchableOpacity>
@@ -256,6 +362,10 @@ function AppContent() {
             </View>
             <Text style={styles.recordMeta}>
               {item.type === 'wifi' ? '📶 WiFi' : '📱 Mobile Data'} • {item.timestamp}
+              {(() => {
+                const version = item.versionName || appVersions[item.packageName];
+                return version ? ` • v${version}` : '';
+              })()}
             </Text>
             <View style={styles.dataRow}>
               <Text
@@ -308,6 +418,27 @@ const styles = StyleSheet.create({
     marginTop: 16,
     marginBottom: 8,
   },
+  deviceIdBox: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    marginBottom: 8,
+  },
+  deviceIdLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#1d4ed8',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  deviceIdValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#111827',
+  },
   permissionBox: {
     padding: 12,
     borderRadius: 8,
@@ -341,6 +472,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     borderRadius: 8,
     alignSelf: 'flex-start',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 110, // para hindi lumundag ang layout pag naging spinner
+  },
+  buttonDisabled: {
+    opacity: 0.5,
   },
   buttonSecondary: {
     backgroundColor: '#6b7280',

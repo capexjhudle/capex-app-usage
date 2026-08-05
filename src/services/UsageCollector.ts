@@ -28,6 +28,8 @@ export interface FormattedUsageEntry {
   downloadBytes: number; // ← raw bytes, para sa pag-compute/filter (hal. 100MB+)
   uploadBytes: number; // ← raw bytes, para sa pag-compute/filter (hal. 100MB+)
   timestamp: string;
+  versionName: string; // ← version ng app noong na-collect
+  versionCode: number;
 }
 
 export async function collectAndStoreUsage(): Promise<CollectionResult> {
@@ -84,6 +86,8 @@ export async function collectAndStoreUsage(): Promise<CollectionResult> {
       downloadBytes: entry.rxBytes,
       uploadBytes: entry.txBytes,
       timestamp: formatTimestamp(entry.timestamp),
+      versionName: entry.versionName ?? '',
+      versionCode: entry.versionCode ?? 0,
     }));
 
     const insertedId = await insertUsageRecord(formattedEntries);

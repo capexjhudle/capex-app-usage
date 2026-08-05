@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { getUniqueDeviceId } from '../native/DeviceInfoModule';
 import { saveUserProfile } from '../database/sqlite';
+import { registerUser } from '../api/usageApi';
 
 interface RegistrationScreenProps {
   onRegistered: () => void;
@@ -68,6 +69,25 @@ export default function RegistrationScreen({ onRegistered }: RegistrationScreenP
 
     setSubmitting(true);
     try {
+      // Una: i-register sa backend. Kailangan itong mag-succeed bago
+      // natin i-save locally, para hindi mapunta sa state na "registered"
+      // ang app pero wala naman sa server.
+      const result = await registerUser({
+        name: trimmedName,
+        email: trimmedEmail,
+        phone: trimmedPhone,
+        device_id: deviceId,
+      });
+
+      if (!result.success) {
+        console.warn('[RegistrationScreen] Nabigo ang registration:', result.error);
+        Alert.alert(
+          'Hindi Naipadala',
+          `Hindi na-register sa server. Pakicheck ang internet connection at subukan ulit.\n\n${result.error ?? ''}`
+        );
+        return;
+      }
+
       await saveUserProfile(trimmedName, trimmedEmail, trimmedPhone, deviceId);
       onRegistered();
     } catch (error) {

@@ -10,6 +10,20 @@ export interface NetworkUsageEntry {
   txBytes: number;
   timestamp: number;
   type: 'wifi' | 'data';
+  versionName: string;
+  versionCode: number;
+}
+
+/**
+ * Sagot ng getAppVersion(). Kapag `installed: false`, wala ang app sa
+ * device o hindi ito nakikita ng package visibility rules ng Android 11+.
+ */
+export interface AppVersionInfo {
+  installed: boolean;
+  packageName: string;
+  versionName?: string;
+  versionCode?: number;
+  appName?: string;
 }
 
 /**
@@ -18,6 +32,7 @@ export interface NetworkUsageEntry {
  */
 interface NetworkUsageModuleInterface {
   getUsageStats(startTime: number, endTime: number): Promise<NetworkUsageEntry[]>;
+  getAppVersion(packageName: string): Promise<AppVersionInfo>;
   hasUsageAccessPermission(): Promise<boolean>;
   openUsageAccessSettings(): void;
 }
@@ -50,6 +65,19 @@ export async function getUsageStats(
 }
 
 /**
+ * Kunin ang version ng isang naka-install na app (hal. 'com.cis3mobileapp.app').
+ * Hindi ito nagta-throw kapag wala ang app — { installed: false } ang balik.
+ */
+export async function getAppVersion(
+  packageName: string
+): Promise<AppVersionInfo> {
+  if (!NetworkUsageModule) {
+    return { installed: false, packageName };
+  }
+  return NetworkUsageModule.getAppVersion(packageName);
+}
+
+/**
  * I-check kung granted na ang Usage Access permission
  */
 export async function hasUsageAccessPermission(): Promise<boolean> {
@@ -72,6 +100,7 @@ export function openUsageAccessSettings(): void {
 
 export default {
   getUsageStats,
+  getAppVersion,
   hasUsageAccessPermission,
   openUsageAccessSettings,
 };
