@@ -7,6 +7,30 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
     <!--
+      Para sa in-app prompt na nag-e-exempt sa app sa battery optimization
+      (Doze / App Standby). Kapag hindi naka-exempt, inaantala o kinakansela
+      ng system ang mga alarm natin — dito nasisira ang hourly cycle.
+
+      BABALA: pinagbabawalan ito ng Play Store maliban sa iilang kategorya
+      ng app. Sideload/internal distribution lang dapat ang app na ito.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:ignore="BatteryLife" />
+
+    <!--
+      Exact alarms sa Android 13+ (API 33 pataas), auto-granted — hindi na
+      kailangang pumayag pa ang user. Kung wala ito, `setAndAllowWhileIdle`
+      ang gagamitin ng background-fetch library at pwedeng ma-late ng ilang
+      minuto sa :00 ang hourly run kapag naka-Doze.
+
+      Ang API 31–32 ay saklaw na ng SCHEDULE_EXACT_ALARM na idinadagdag ng
+      library mismo (auto-granted din sa mga bersyong iyon).
+
+      BABALA: kailangan ng Play Store declaration para dito. Sideload lang.
+    -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
+    <!--
       Explicit na package visibility para sa mga app na sinusubaybayan natin.
       Backup ito kung sakaling matanggal ang QUERY_ALL_PACKAGES (mahigpit ang
       Play Store dito) — sa listahang ito, gagana pa rin ang getPackageInfo().

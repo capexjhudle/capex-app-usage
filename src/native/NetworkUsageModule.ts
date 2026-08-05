@@ -35,6 +35,10 @@ interface NetworkUsageModuleInterface {
   getAppVersion(packageName: string): Promise<AppVersionInfo>;
   hasUsageAccessPermission(): Promise<boolean>;
   openUsageAccessSettings(): void;
+  isIgnoringBatteryOptimizations(): Promise<boolean>;
+  requestIgnoreBatteryOptimizations(): Promise<boolean>;
+  openBatteryOptimizationSettings(): void;
+  canScheduleExactAlarms(): Promise<boolean>;
 }
 
 // Kunin ang native module base sa pangalan na ibinigay sa getName() sa Kotlin
@@ -98,9 +102,71 @@ export function openUsageAccessSettings(): void {
   NetworkUsageModule.openUsageAccessSettings();
 }
 
+/**
+ * Naka-exempt na ba ang app sa battery optimization (Doze / App Standby)?
+ *
+ * Kapag hindi, pwedeng antalahin o kanselahin ng system ang mga alarm ng
+ * hourly cycle — ito ang pinakamadalas na dahilan kung bakit tumitigil ang
+ * background collection sa mga totoong device.
+ */
+export async function isIgnoringBatteryOptimizations(): Promise<boolean> {
+  if (!NetworkUsageModule) {
+    return false;
+  }
+  return NetworkUsageModule.isIgnoringBatteryOptimizations();
+}
+
+/**
+ * Ipakita ang system dialog na "Allow <app> to always run in the background?".
+ *
+ * Kapag hindi kayang buksan ang dialog (may mga OEM ROM na tinanggal ito),
+ * awtomatikong bubuksan na lang nito ang Settings screen bilang fallback.
+ * Nagbabalik ng `true` kung ang mismong dialog ang naipakita.
+ */
+export async function requestIgnoreBatteryOptimizations(): Promise<boolean> {
+  if (!NetworkUsageModule) {
+    return false;
+  }
+
+  const shown = await NetworkUsageModule.requestIgnoreBatteryOptimizations();
+
+  if (!shown) {
+    NetworkUsageModule.openBatteryOptimizationSettings();
+  }
+
+  return shown;
+}
+
+/**
+ * Buksan diretso ang Settings — dito matatagpuan ang "Autostart" at
+ * "Battery" ng mga OEM ROM (Xiaomi, Oppo, Vivo, Huawei) na hindi saklaw ng
+ * standard na battery-optimization dialog ng Android.
+ */
+export function openBatteryOptimizationSettings(): void {
+  if (!NetworkUsageModule) {
+    return;
+  }
+  NetworkUsageModule.openBatteryOptimizationSettings();
+}
+
+/**
+ * Makakapag-schedule ba tayo ng exact na alarm? Kapag hindi, tumatakbo pa
+ * rin ang hourly cycle pero pwedeng ma-late ng ilang minuto sa :00.
+ */
+export async function canScheduleExactAlarms(): Promise<boolean> {
+  if (!NetworkUsageModule) {
+    return false;
+  }
+  return NetworkUsageModule.canScheduleExactAlarms();
+}
+
 export default {
   getUsageStats,
   getAppVersion,
   hasUsageAccessPermission,
   openUsageAccessSettings,
+  isIgnoringBatteryOptimizations,
+  requestIgnoreBatteryOptimizations,
+  openBatteryOptimizationSettings,
+  canScheduleExactAlarms,
 };

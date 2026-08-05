@@ -8,6 +8,7 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   FlatList,
   StatusBar,
   StyleSheet,
@@ -29,11 +30,15 @@ import {
 } from './src/database/sqlite';
 import { syncPendingRecords } from './src/services/SyncService';
 import { configureBackgroundTask } from './src/background/BackgroundTask';
-import { collectAndStoreUsage } from './src/services/UsageCollector';
+// import { collectAndStoreUsage } from './src/services/UsageCollector';
 import {
   hasUsageAccessPermission,
   openUsageAccessSettings,
   getAppVersion,
+  isIgnoringBatteryOptimizations,
+  requestIgnoreBatteryOptimizations,
+  openBatteryOptimizationSettings,
+  canScheduleExactAlarms,
 } from './src/native/NetworkUsageModule';
 
 import RegistrationScreen from './src/screens/RegistrationScreen';
@@ -85,7 +90,13 @@ function App() {
   useEffect(() => {
     (async () => {
       await initDatabase();
-      configureBackgroundTask();
+
+      // Hindi ito hinihintay para hindi maantala ang UI — pero kailangan ng
+      // .catch() para hindi maging unhandled rejection kung sakaling
+      // mabigo ang pag-configure ng background scheduling.
+      configureBackgroundTask().catch((error) => {
+        console.warn('[App] Nabigo ang configureBackgroundTask:', error);
+      });
 
       const registered = await isUserRegistered();
       setIsRegistered(registered);
@@ -115,6 +126,12 @@ function AppContent() {
 
   const [records, setRecords] = useState<UsageQueueRow[]>([]);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  // Naka-exempt ba tayo sa battery optimization? Kung hindi, pwedeng patayin
+  // ng system ang kada-oras na collection at sending. null = checking pa.
+  const [batteryExempt, setBatteryExempt] = useState<boolean | null>(null);
+  // Diagnostic lang: kung false, tumatakbo pa rin ang hourly cycle pero
+  // pwedeng ma-late ng ilang minuto sa :00.
+  const [exactAlarms, setExactAlarms] = useState<boolean | null>(null);
   const [status, setStatus] = useState<string>('');
   const [showHighUsageOnly, setShowHighUsageOnly] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
@@ -205,6 +222,43 @@ function AppContent() {
     setHasPermission(granted);
   }, []);
 
+  /**
+   * Tingnan ang mga setting na kailangan para tuluy-tuloy na tumakbo ang
+   * hourly cycle sa background. Tinatawag ito sa mount at tuwing babalik
+   * ang app sa foreground — dahil sa labas ng app binabago ng user ito.
+   */
+  const checkBackgroundHealth = useCallback(async () => {
+    try {
+      setBatteryExempt(await isIgnoringBatteryOptimizations());
+    } catch (error) {
+      console.warn('[App] Hindi ma-check ang battery optimization:', error);
+      setBatteryExempt(null);
+    }
+
+    try {
+      setExactAlarms(await canScheduleExactAlarms());
+    } catch (error) {
+      console.warn('[App] Hindi ma-check ang exact alarms:', error);
+      setExactAlarms(null);
+    }
+  }, []);
+
+  /**
+   * Ipakita ang system dialog na "Allow to always run in the background?".
+   * Kung wala ang dialog sa ROM na ito, ang Settings screen na lang ang
+   * bubuksan — bahala na ang JS wrapper sa fallback.
+   */
+  const handleRequestBatteryExemption = useCallback(async () => {
+    try {
+      await requestIgnoreBatteryOptimizations();
+    } catch (error) {
+      console.warn('[App] Nabigo ang battery exemption request:', error);
+      setStatus('Hindi mabuksan ang battery settings ng device na ito.');
+    }
+    // Sasagutin ito ng user sa labas ng app, kaya ang AppState listener
+    // ang bahalang mag-refresh pagbalik niya rito.
+  }, []);
+
   const loadRegisteredDeviceId = useCallback(async () => {
     const profile = await getUserProfile();
     setRegisteredDeviceId(profile?.device_id ?? null);
@@ -234,22 +288,43 @@ function AppContent() {
 
   useEffect(() => {
     checkPermission();
+    checkBackgroundHealth();
     loadRecords();
     loadAppVersions();
     loadRegisteredDeviceId();
-  }, [checkPermission, loadRecords, loadAppVersions, loadRegisteredDeviceId]);
+  }, [
+    checkPermission,
+    checkBackgroundHealth,
+    loadRecords,
+    loadAppVersions,
+    loadRegisteredDeviceId,
+  ]);
 
-  const handleManualCollect = async () => {
-    setStatus('Kinokolekta...');
-    const result = await collectAndStoreUsage();
-    if (result.success) {
-      setStatus(`Na-save: ${result.recordCount} entries`);
-    } else {
-      setStatus(`Error: ${result.reason}`);
-    }
-    await loadRecords();
-    await checkPermission();
-  };
+  // Sa labas ng app binabago ang Usage Access at ang battery optimization,
+  // kaya kailangang mag-refresh tayo pagbalik ng user sa app — kung hindi,
+  // mananatiling "❌" ang ipinapakita kahit pumayag na siya.
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        checkPermission();
+        checkBackgroundHealth();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [checkPermission, checkBackgroundHealth]);
+
+  // const handleManualCollect = async () => {
+  //   setStatus('Kinokolekta...');
+  //   const result = await collectAndStoreUsage();
+  //   if (result.success) {
+  //     setStatus(`Na-save: ${result.recordCount} entries`);
+  //   } else {
+  //     setStatus(`Error: ${result.reason}`);
+  //   }
+  //   await loadRecords();
+  //   await checkPermission();
+  // };
 
   return (
     <View
@@ -287,6 +362,49 @@ function AppContent() {
             <Text style={styles.buttonText}>Buksan ang Settings</Text>
           </TouchableOpacity>
         )}
+
+        <View style={styles.permissionDivider} />
+
+        <Text style={styles.permissionText}>
+          Background (Battery):{' '}
+          {batteryExempt === null
+            ? 'Checking...'
+            : batteryExempt
+            ? '✅ Naka-exempt'
+            : '❌ Naka-optimize'}
+        </Text>
+
+        {batteryExempt === false && (
+          <>
+            <Text style={styles.permissionHint}>
+              Kapag naka-optimize, pinapatay ng system ang kada-oras na
+              collection at pag-send kapag matagal nakatiwangwang ang phone.
+              Kailangang payagan ito para tuluy-tuloy ang pag-record.
+            </Text>
+            <TouchableOpacity
+              style={styles.button}
+              onPress={handleRequestBatteryExemption}
+            >
+              <Text style={styles.buttonText}>
+                Payagang Tumakbo sa Background
+              </Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {batteryExempt === true && exactAlarms === false && (
+          <Text style={styles.permissionHint}>
+            Note: inexact ang alarms sa device na ito — tumatakbo pa rin kada
+            oras, pero pwedeng ma-late ng ilang minuto sa :00.
+          </Text>
+        )}
+
+        <TouchableOpacity onPress={openBatteryOptimizationSettings}>
+          <Text style={styles.linkText}>
+            Xiaomi / Oppo / Vivo / Huawei? Buksan ang Settings para sa
+            &quot;Autostart&quot; →
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {highUsageCount > 0 && (
@@ -448,6 +566,23 @@ const styles = StyleSheet.create({
   permissionText: {
     fontSize: 14,
     marginBottom: 8,
+  },
+  permissionDivider: {
+    height: 1,
+    backgroundColor: '#e5e7eb',
+    marginBottom: 10,
+  },
+  permissionHint: {
+    fontSize: 12,
+    color: '#6b7280',
+    lineHeight: 17,
+    marginBottom: 8,
+  },
+  linkText: {
+    fontSize: 12,
+    color: '#2563eb',
+    fontWeight: '600',
+    marginTop: 10,
   },
   highUsageBanner: {
     padding: 10,

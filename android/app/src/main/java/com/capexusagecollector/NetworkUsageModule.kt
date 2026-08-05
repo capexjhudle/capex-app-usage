@@ -178,4 +178,123 @@
           intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
           reactApplicationContext.startActivity(intent)
       }
+
+      /**
+       * Naka-exempt na ba tayo sa battery optimization (Doze / App Standby)?
+       *
+       * Kapag HINDI, pwedeng antalahin o tuluyang kanselahin ng system ang
+       * mga alarm natin — ito ang pinakamadalas na dahilan kung bakit
+       * tumitigil ang hourly collection kapag matagal na nakatiwangwang
+       * ang phone.
+       */
+      @ReactMethod
+      fun isIgnoringBatteryOptimizations(promise: Promise) {
+          try {
+              if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                  // Wala pang Doze bago ang Android 6 — ituring nang exempt.
+                  promise.resolve(true)
+                  return
+              }
+
+              val context = reactApplicationContext
+              val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+              promise.resolve(powerManager.isIgnoringBatteryOptimizations(context.packageName))
+          } catch (e: Exception) {
+              promise.reject("BATTERY_OPT_CHECK_ERROR", e.message, e)
+          }
+      }
+
+      /**
+       * Ipakita ang system dialog na "Allow <app> to always run in the
+       * background?". Isang tap lang ito para sa user — hindi na kailangang
+       * maghanap sa Settings.
+       *
+       * Nagbabalik ng `false` kung hindi kayang buksan ang dialog (hal.
+       * tinanggal ito ng OEM); doon na papasok ang fallback na
+       * openBatteryOptimizationSettings().
+       */
+      @ReactMethod
+      fun requestIgnoreBatteryOptimizations(promise: Promise) {
+          try {
+              if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+                  promise.resolve(true)
+                  return
+              }
+
+              val context = reactApplicationContext
+              val intent = android.content.Intent(
+                  android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+              )
+              intent.data = android.net.Uri.parse("package:${context.packageName}")
+              intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+
+              if (intent.resolveActivity(context.packageManager) == null) {
+                  promise.resolve(false)
+                  return
+              }
+
+              context.startActivity(intent)
+              promise.resolve(true)
+          } catch (e: Exception) {
+              // Hal. ActivityNotFoundException sa ibang OEM ROM — huwag
+              // i-crash ang app, hayaan na lang mag-fallback ang JS.
+              android.util.Log.w("NetworkUsageModule", "requestIgnoreBatteryOptimizations: ${e.message}")
+              promise.resolve(false)
+          }
+      }
+
+      /**
+       * Fallback: buksan ang listahan ng "Battery optimization" ng system.
+       * Kung wala rin iyon, ang App Info page na lang ng app na ito — doon
+       * matatagpuan ang "Autostart" / "Battery" ng mga OEM ROM tulad ng
+       * Xiaomi, Oppo, Vivo at Huawei.
+       */
+      @ReactMethod
+      fun openBatteryOptimizationSettings() {
+          val context = reactApplicationContext
+
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+              val listIntent = android.content.Intent(
+                  android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
+              )
+              listIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+
+              if (listIntent.resolveActivity(context.packageManager) != null) {
+                  context.startActivity(listIntent)
+                  return
+              }
+          }
+
+          val appInfoIntent = android.content.Intent(
+              android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+              android.net.Uri.parse("package:${context.packageName}")
+          )
+          appInfoIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+          context.startActivity(appInfoIntent)
+      }
+
+      /**
+       * Makakapag-schedule ba tayo ng EXACT na alarm?
+       *
+       * Kung hindi, inexact ang gagamitin ng background-fetch library
+       * (setAndAllowWhileIdle) — tumatakbo pa rin ang hourly cycle pero
+       * pwedeng ma-late ng ilang minuto sa :00 kapag naka-Doze ang phone.
+       * Diagnostic lang ito para sa UI.
+       */
+      @ReactMethod
+      fun canScheduleExactAlarms(promise: Promise) {
+          try {
+              if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                  // Bago ang Android 12, walang hinihinging permission.
+                  promise.resolve(true)
+                  return
+              }
+
+              val alarmManager = reactApplicationContext
+                  .getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+              promise.resolve(alarmManager.canScheduleExactAlarms())
+          } catch (e: Exception) {
+              promise.reject("EXACT_ALARM_CHECK_ERROR", e.message, e)
+          }
+      }
   }
