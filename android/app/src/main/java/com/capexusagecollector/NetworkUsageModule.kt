@@ -3,8 +3,10 @@
   import android.app.usage.NetworkStats
   import android.app.usage.NetworkStatsManager
   import android.content.Context
+  import android.content.pm.PackageInfo
   import android.content.pm.PackageManager
   import android.net.ConnectivityManager
+  import android.os.Build
   import com.facebook.react.bridge.Arguments
   import com.facebook.react.bridge.ReactApplicationContext
   import com.facebook.react.bridge.ReactContextBaseJavaModule
@@ -29,11 +31,18 @@
               val packageManager = context.packageManager
 
               val resultArray: WritableArray = Arguments.createArray()
-              val installedApps = packageManager.getInstalledApplications(PackageManager.GET_META_DATA)
 
-              // Mapa ng uid -> packageName, para hindi na natin kailangang mag-loop
-              // ulit sa installedApps kada network type
-              val uidToPackageName = installedApps.associateBy({ it.uid }, { it.packageName })
+              // getInstalledPackages (imbes na getInstalledApplications) para
+              // kasama na ang versionName/versionCode ng bawat app.
+              val installedPackages = packageManager.getInstalledPackages(0)
+
+              // Mapa ng uid -> PackageInfo, para hindi na natin kailangang mag-loop
+              // ulit sa installedPackages kada network type
+              val uidToPackage = mutableMapOf<Int, PackageInfo>()
+              for (pkg in installedPackages) {
+                  val appInfo = pkg.applicationInfo ?: continue
+                  uidToPackage[appInfo.uid] = pkg
+              }
 
               // TYPE_MOBILE -> "data", TYPE_WIFI -> "wifi"
               val networkTypes = mapOf(
@@ -65,11 +74,14 @@
                       // Ngayon, i-match natin sa mga installed apps
                       for ((uid, totals) in usageByUid) {
                           val (rxBytes, txBytes) = totals
-                          val packageName = uidToPackageName[uid] ?: continue // skip kung walang katugmang app
+                          val pkg = uidToPackage[uid] ?: continue // skip kung walang katugmang app
+                          val packageName = pkg.packageName
 
                           if (rxBytes > 0 || txBytes > 0) {
                               val entry: WritableMap = Arguments.createMap()
                               entry.putString("packageName", packageName)
+                              entry.putString("versionName", pkg.versionName ?: "")
+                              entry.putDouble("versionCode", versionCodeOf(pkg).toDouble())
                               entry.putInt("uid", uid)
                               entry.putDouble("rxBytes", rxBytes.toDouble())
                               entry.putDouble("txBytes", txBytes.toDouble())
@@ -89,6 +101,58 @@
               promise.resolve(resultArray)
           } catch (e: Exception) {
               promise.reject("USAGE_STATS_ERROR", e.message, e)
+          }
+      }
+
+      /**
+       * versionCode na compatible sa luma at bagong Android
+       * (longVersionCode simula API 28).
+       */
+      private fun versionCodeOf(pkg: PackageInfo): Long {
+          return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+              pkg.longVersionCode
+          } else {
+              @Suppress("DEPRECATION")
+              pkg.versionCode.toLong()
+          }
+      }
+
+      /**
+       * Kunin ang version ng isang partikular na naka-install na app,
+       * hal. "com.cis3mobileapp.app".
+       *
+       * Nire-resolve nito kahit hindi pa nag-uusage ang app, at nagbabalik
+       * ng { installed: false } kung wala talaga sa device (o hindi nakikita
+       * dahil sa package visibility ng Android 11+).
+       */
+      @ReactMethod
+      fun getAppVersion(packageName: String, promise: Promise) {
+          try {
+              val packageManager = reactApplicationContext.packageManager
+              val pkg = packageManager.getPackageInfo(packageName, 0)
+              val appInfo = pkg.applicationInfo
+
+              val result: WritableMap = Arguments.createMap()
+              result.putBoolean("installed", true)
+              result.putString("packageName", pkg.packageName)
+              result.putString("versionName", pkg.versionName ?: "")
+              result.putDouble("versionCode", versionCodeOf(pkg).toDouble())
+              result.putString(
+                  "appName",
+                  if (appInfo != null) {
+                      packageManager.getApplicationLabel(appInfo).toString()
+                  } else {
+                      packageName
+                  }
+              )
+              promise.resolve(result)
+          } catch (e: PackageManager.NameNotFoundException) {
+              val result: WritableMap = Arguments.createMap()
+              result.putBoolean("installed", false)
+              result.putString("packageName", packageName)
+              promise.resolve(result)
+          } catch (e: Exception) {
+              promise.reject("APP_VERSION_ERROR", e.message, e)
           }
       }
 

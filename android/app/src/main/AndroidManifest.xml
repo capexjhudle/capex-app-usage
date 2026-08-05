@@ -6,6 +6,19 @@
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
 
+    <!--
+      Explicit na package visibility para sa mga app na sinusubaybayan natin.
+      Backup ito kung sakaling matanggal ang QUERY_ALL_PACKAGES (mahigpit ang
+      Play Store dito) — sa listahang ito, gagana pa rin ang getPackageInfo().
+    -->
+    <queries>
+        <package android:name="com.cis3mobileapp.app" />
+        <package android:name="com.viber.voip" />
+        <package android:name="com.android.chrome" />
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.waze" />
+    </queries>
+
     <application
       android:name=".MainApplication"
       android:label="@string/app_name"
